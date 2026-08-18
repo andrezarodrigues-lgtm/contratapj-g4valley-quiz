@@ -17,6 +17,7 @@
     --blue-500: #3B82F6;
     --coral: #DE5968;
     --gold: #FFC94D;
+    --wheel-lose: #6B7A9E;
     --paper: #F6F8FF;
     --card: #FFFFFF;
     --ink: #0C1F5C;
@@ -203,10 +204,10 @@
   .wheel {
     width: 100%; height: 100%; border-radius: 50%; position: relative;
     background: conic-gradient(
-      var(--blue) 0deg 45deg, var(--blue-600) 45deg 90deg,
-      var(--blue) 90deg 135deg, var(--blue-600) 135deg 180deg,
-      var(--blue) 180deg 225deg, var(--blue-600) 225deg 270deg,
-      var(--blue) 270deg 315deg, var(--blue-600) 315deg 360deg
+      var(--wheel-lose) 0deg 45deg, var(--blue) 45deg 90deg,
+      var(--wheel-lose) 90deg 135deg, var(--blue-600) 135deg 180deg,
+      var(--wheel-lose) 180deg 225deg, var(--blue) 225deg 270deg,
+      var(--wheel-lose) 270deg 315deg, var(--blue-600) 315deg 360deg
     );
     border: 3px solid rgba(255,255,255,0.85);
     box-shadow: inset 0 4px 14px rgba(0,0,0,0.3);
@@ -265,6 +266,7 @@
     width: 3.6rem; height: 3.6rem; border-radius: 50%; margin: 0 auto 1rem;
     background: var(--success-bg); color: var(--success); display: flex; align-items: center; justify-content: center;
   }
+  .modal .prize-icon.lose { background: #EEF1F8; color: var(--wheel-lose); }
   .modal h3 { font-size: 1.25rem; margin-bottom: 0.5rem; }
   .modal p { color: var(--slate); font-size: 0.94rem; margin-bottom: 1.5rem; }
   .modal .prize-name { color: var(--blue); font-weight: 800; }
@@ -375,11 +377,9 @@
 
 <div class="modal-backdrop" id="prizeModal">
   <div class="modal">
-    <div class="prize-icon">
-      <svg width="26" height="26" viewBox="0 0 24 24" fill="none"><path d="M20 7L9 18l-5-5" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
-    </div>
-    <h3>Parabéns!</h3>
-    <p>Você ganhou: <span class="prize-name" id="prizeName"></span>! Já pode pegar seu brinde com a nossa equipe aqui do estande.</p>
+    <div class="prize-icon" id="modalIcon"></div>
+    <h3 id="modalTitle"></h3>
+    <p id="modalMsg"></p>
     <button class="btn" id="btnCloseModal" type="button">Fechar</button>
   </div>
 </div>
@@ -445,15 +445,66 @@
     }
   ];
 
+  /* ---- prize / wheel outcome model ---- */
   var PRIZES = ["Ecobag ContrataPJ", "Copo ContrataPJ"];
-  var SLICE_LABELS = ["Ecobag", "Copo"];
   var PRIZE_ICONS = [
     '<svg viewBox="0 0 24 24" fill="none"><path d="M6 8h12l-1 12H7L6 8Z" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/><path d="M9 8V6a3 3 0 0 1 6 0v2" stroke="currentColor" stroke-width="1.8"/></svg>',
     '<svg viewBox="0 0 24 24" fill="none"><path d="M5 8h11v7a4 4 0 0 1-4 4H9a4 4 0 0 1-4-4V8Z" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/><path d="M16 9h1.5a2.5 2.5 0 0 1 0 5H16" stroke="currentColor" stroke-width="1.8"/></svg>'
   ];
-  var SLICES = 8;
+  var LOSE_LABEL = "Novamente"; // short form for the wheel slice; full phrase used in the result modal
+  var LOSE_ICON = '<svg viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="8.5" stroke="currentColor" stroke-width="1.8"/><path d="M12 7.5V12l3 2" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+
+  // Visual layout of the 8 slices around the wheel. This is decorative/plausible only —
+  // the ACTUAL outcome is decided by decideOutcome() below, before the wheel ever spins.
+  // type: "lose" | "prize" (prizeIndex references PRIZES / PRIZE_ICONS)
+  var SLICE_DATA = [
+    { type: "lose" },
+    { type: "prize", prizeIndex: 0 },
+    { type: "lose" },
+    { type: "prize", prizeIndex: 1 },
+    { type: "lose" },
+    { type: "prize", prizeIndex: 0 },
+    { type: "lose" },
+    { type: "prize", prizeIndex: 1 }
+  ];
+  var SLICES = SLICE_DATA.length;
   var SLICE_DEG = 360 / SLICES;
   var PASS_THRESHOLD = 4;
+
+  /* ---- weighted RNG (70% lose / 30% win) + strict prize alternation ---- */
+  var LOSE_PROBABILITY = 0.70; // business rule: 70% "tente novamente", 30% prêmio físico
+  var NEXT_PRIZE_KEY = "cpj_next_prize_index"; // persisted so alternation survives reloads on the booth device
+
+  function getNextPrizeIndex() {
+    var stored = parseInt(localStorage.getItem(NEXT_PRIZE_KEY), 10);
+    return (stored === 0 || stored === 1) ? stored : 0; // first win ever defaults to prize 0 (Ecobag)
+  }
+  function advanceNextPrizeIndex(justAwardedIndex) {
+    localStorage.setItem(NEXT_PRIZE_KEY, String(1 - justAwardedIndex));
+  }
+
+  // Single source of truth for "what happens this spin". Called ONCE, at click time,
+  // before any animation starts — the wheel's spin is just a visual reveal of this decision.
+  function decideOutcome() {
+    var rand = Math.random();
+    if (rand < LOSE_PROBABILITY) {
+      return { type: "lose" };
+    }
+    var prizeIndex = getNextPrizeIndex();
+    advanceNextPrizeIndex(prizeIndex);
+    return { type: "prize", prizeIndex: prizeIndex };
+  }
+
+  // Given the decided outcome, choose which (visually plausible) slice the wheel will
+  // land on — randomized among the matching slices so the same slice isn't always hit.
+  function pickTargetSliceIndex(outcome) {
+    var candidates = [];
+    SLICE_DATA.forEach(function (slice, idx) {
+      if (outcome.type === "lose" && slice.type === "lose") candidates.push(idx);
+      if (outcome.type === "prize" && slice.type === "prize" && slice.prizeIndex === outcome.prizeIndex) candidates.push(idx);
+    });
+    return candidates[Math.floor(Math.random() * candidates.length)];
+  }
 
   var $ = function (id) { return document.getElementById(id); };
   var screens = {
@@ -533,7 +584,7 @@
       badge.className = "result-badge win";
       badge.innerHTML = '<svg width="28" height="28" viewBox="0 0 24 24" fill="none"><path d="M20 7L9 18l-5-5" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/></svg>';
       $("resultTitle").textContent = "Parabéns! Você ganhou seu brinde.";
-      $("resultMsg").textContent = "Você manda bem em gestão de PJ. Gire a roleta pra descobrir qual brinde ContrataPJ é seu.";
+      $("resultMsg").textContent = "Você manda bem em gestão de PJ. Gire a roleta e veja o que te espera.";
       wheelWrap.classList.remove("locked");
       spinBtn.disabled = false;
     } else {
@@ -551,7 +602,7 @@
   /* ---- wheel ---- */
   (function buildWheel() {
     var wheelEl = $("wheel");
-    for (var i = 0; i < SLICES; i++) {
+    SLICE_DATA.forEach(function (slice, i) {
       var angle = SLICE_DEG * i + SLICE_DEG / 2;
       var label = document.createElement("div");
       label.className = "wheel-slice-label";
@@ -561,14 +612,19 @@
       if (angle > 90 && angle < 270) { inner.style.transform = "rotate(180deg)"; inner.style.paddingLeft = "8%"; inner.style.paddingRight = "34%"; inner.style.flexDirection = "row-reverse"; }
       var icon = document.createElement("span");
       icon.className = "icon";
-      icon.innerHTML = PRIZE_ICONS[i % 2];
       var text = document.createElement("span");
-      text.textContent = SLICE_LABELS[i % 2];
+      if (slice.type === "lose") {
+        icon.innerHTML = LOSE_ICON;
+        text.textContent = LOSE_LABEL;
+      } else {
+        icon.innerHTML = PRIZE_ICONS[slice.prizeIndex];
+        text.textContent = PRIZES[slice.prizeIndex].replace(" ContrataPJ", "");
+      }
       inner.appendChild(icon);
       inner.appendChild(text);
       label.appendChild(inner);
       wheelEl.appendChild(label);
-    }
+    });
   })();
 
   (function buildBulbs() {
@@ -592,8 +648,12 @@
     spinning = true;
     $("btnSpin").disabled = true;
 
-    var targetIndex = Math.floor(Math.random() * SLICES);
-    var prize = PRIZES[targetIndex % 2];
+    // The outcome is fully decided HERE, before any animation — the spin below is purely
+    // a visual reveal of a result that already exists. This is what keeps the 70/30 split
+    // exact and the prize alternation strict, regardless of how "random" the spin looks.
+    var outcome = decideOutcome();
+    var targetIndex = pickTargetSliceIndex(outcome);
+
     var sliceCenter = targetIndex * SLICE_DEG + SLICE_DEG / 2;
     var normalizedCurrent = currentRotation % 360;
     var neededOffset = (360 - sliceCenter) % 360;
@@ -610,8 +670,8 @@
       settled = true;
       wheelEl.removeEventListener("transitionend", onTransitionEnd);
       spinning = false;
-      launchConfetti();
-      openPrizeModal(prize);
+      if (outcome.type === "prize") { launchConfetti(); }
+      openResultModal(outcome);
     }
     function onTransitionEnd(e) {
       if (e.target !== wheelEl || e.propertyName !== "transform") return;
@@ -621,8 +681,19 @@
     setTimeout(settle, 4400); // safety net in case transitionend doesn't fire
   }
 
-  function openPrizeModal(prize) {
-    $("prizeName").textContent = prize;
+  function openResultModal(outcome) {
+    var icon = $("modalIcon");
+    if (outcome.type === "prize") {
+      icon.className = "prize-icon";
+      icon.innerHTML = '<svg width="26" height="26" viewBox="0 0 24 24" fill="none"><path d="M20 7L9 18l-5-5" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+      $("modalTitle").textContent = "Parabéns!";
+      $("modalMsg").innerHTML = "Você ganhou: <b class=\"prize-name\">" + PRIZES[outcome.prizeIndex] + "</b>! Já pode pegar seu brinde com a nossa equipe aqui do estande.";
+    } else {
+      icon.className = "prize-icon lose";
+      icon.innerHTML = LOSE_ICON;
+      $("modalTitle").textContent = "Quase!";
+      $("modalMsg").textContent = "Tente novamente mais tarde.";
+    }
     $("prizeModal").classList.add("open");
   }
   function closePrizeModal() {
