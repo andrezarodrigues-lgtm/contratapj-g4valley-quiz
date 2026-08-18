@@ -184,11 +184,15 @@
     filter: drop-shadow(0 3px 5px rgba(12,31,92,0.4));
   }
   .wheel-frame {
-    position: relative; width: 100%; aspect-ratio: 1; border-radius: 50%;
+    position: relative; width: 100%; border-radius: 50%;
     background: linear-gradient(145deg, #FFE3A3, #FFC94D 55%, #E2A028);
     padding: 4.5%;
     box-shadow: 0 22px 48px rgba(12,31,92,0.38), inset 0 2px 5px rgba(255,255,255,0.6), inset 0 -3px 6px rgba(150,95,0,0.25);
   }
+  /* Forces a perfect square via the classic padding-top trick instead of aspect-ratio,
+     which some tablet/Android browsers at the booth may not support (verified: without
+     this, .wheel-frame collapses to a squashed sliver instead of a circle). */
+  .wheel-frame::before { content: ""; display: block; padding-top: 100%; }
   .wheel-bulbs { position: absolute; inset: 0; z-index: 1; }
   .wheel-bulb {
     position: absolute; width: 6.4%; height: 6.4%; border-radius: 50%;
@@ -197,7 +201,7 @@
     transform: translate(-50%, -50%);
   }
   .wheel-ring {
-    position: relative; width: 100%; height: 100%; border-radius: 50%;
+    position: absolute; inset: 4.5%; border-radius: 50%;
     background: var(--navy); padding: 3.2%;
     box-shadow: inset 0 0 0 2px rgba(255,255,255,0.18), inset 0 3px 10px rgba(0,0,0,0.35);
   }
